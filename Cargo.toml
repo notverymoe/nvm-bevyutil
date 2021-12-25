@@ -1,0 +1,11 @@
+[package]
+name = "nvm-bevyutil"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+arrayvec = "0.7.2"
+
+[dependencies.bevy]
+git="https://github.com/bevyengine/bevy.git"
+branch="main"
