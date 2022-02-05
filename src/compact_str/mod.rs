@@ -3,193 +3,244 @@
 \*========================================================================*/
 
 #[cfg(test)] mod test;
-mod bitset;
 
-use std::{fmt::Debug, str::FromStr};
+pub trait CompactStr: Default + Copy + Eq + Ord + std::hash::Hash + std::fmt::Debug + std::fmt::Display {
+    type InnerType: num_traits::PrimInt;
 
-use bitset::*;
+    const CAPACITY: usize;
 
-pub type CompactStr16  = CompactStr< 2>;
-pub type CompactStr32  = CompactStr< 4>;
-pub type CompactStr48  = CompactStr< 6>;
-pub type CompactStr64  = CompactStr< 8>;
-pub type CompactStr96  = CompactStr<12>;
-pub type CompactStr128 = CompactStr<16>;
-pub type CompactStr192 = CompactStr<24>;
-pub type CompactStr256 = CompactStr<32>;
+    fn new(value: &str) -> Self;
+    fn try_new(value: &str) -> Option<Self>;
+    fn to_str(self) -> String;
+    fn len(self) -> usize;
+    fn is_empty(self) -> bool;
+    fn try_from_raw(value: Self::InnerType) -> Option<Self>;
+    fn from_raw(value: Self::InnerType) -> Self;
 
-#[repr(transparent)]
-#[derive(Default, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
-pub struct CompactStr<const WIDTH: usize>(BitSet<WIDTH>);
+    /// Creates a new CompactStr from its raw representation without
+    /// validating length or 
+    /// 
+    /// # Safety
+    /// There's no risk of UB in calling this. However, if the value
+    /// contains invalid codepoints or a null in the middle of the
+    /// raw version, then, behaviour of the struct is unspecified.
+    unsafe fn from_raw_unchecked(value: Self::InnerType) -> Self;
 
-impl<const WIDTH: usize> FromStr for CompactStr<WIDTH> {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::try_parse_str(s)
-    }
+    fn to_raw(self) -> Self::InnerType;
+    fn set_ascii(&mut self, idx: usize, value: u8);
+    fn get_ascii(&self, idx: usize) -> u8;
 }
 
-impl<const WIDTH: usize> Debug for CompactStr<WIDTH> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_str())
-    }
+macro_rules! set_raw {
+    ($T:ty, $s:ident, $idx:ident, $val:ident) => {{
+        let msk: $T = 1 << ($idx*5);
+        let val: $T = ($val & 0b1_1111) as $T << ($idx*5);
+        ($s & !msk) | val
+    }}
 }
 
-impl<const WIDTH: usize> CompactStr<WIDTH> {
+macro_rules! impl_compact_str {
+    ($S:ident, $T:ty) => {
+        #[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $S($T);
 
-    pub const fn empty() -> Self {
-        Self(BitSet::empty())
-    }
-
-    pub const fn try_parse_str(s: &str) -> Result<Self, &'static str> {
-        if s.len() <= WIDTH*8/5 {
-            Ok(Self::parse_str(s))
-        } else {
-            Err("String cannot fit into CompactStr")
+        impl std::fmt::Debug for $S {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_tuple("CompactStr").field(&self.to_str()).finish()
+            }
         }
-    }
-
-    pub const fn parse_str(s: &str) -> Self {
-        Self::from_ascii_bytes(s.as_bytes())
-    }
-
-    pub const fn from_ascii_bytes(chars: &[u8]) -> Self {
-        let mut buffer = [0; 64];
-
-        let max_len = const_min(chars.len(), WIDTH*8/5);
-        let mut i = 0;
-        while i < max_len {
-            let character = chars[i];
-
-            buffer[i] = match character {
-                65..=90  => character-63, /* A-Z -> 2-27 */ 
-                97..=122 => character-95, /* a-z -> 2-27*/ 
-                _        => 1             /* Spc */
-            };
-
-            i += 1;
+        
+        impl std::fmt::Display for $S {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.to_str())
+            }
         }
 
-        Self(BitSet::from_buffer(&buffer, max_len, 5))
-    }
-}
+        impl $S {
+            pub const CAPACITY: usize = std::mem::size_of::<$T>()*8/5;
 
-impl<const WIDTH: usize> CompactStr<WIDTH> {
-    pub fn to_str(&self) -> String {
-        self.chars().collect()   
-    }
+            #[inline] pub const fn new(value: &str) -> Self {
+                if let Some(value) = Self::try_new(value) {
+                    value
+                } else {
+                    panic!("String too long to store in CompactStr");
+                }
+            }
 
-    pub fn set_ascii(&mut self, idx: usize, value: u8) {
-        self.0.set_bits(idx*5, 5, value)
-    }
+            #[inline] pub const fn try_new(value: &str) -> Option<Self> {
+                let chars = value.as_bytes();
+                if chars.len() > Self::CAPACITY { return None; }
 
-    pub fn at<T: From<u8>>(&self, index: usize) -> T {
-        if index >= Self::capacity() { panic!("Attempt to index out of bounds!") }
-        self.at_unchecked::<T>(index)
-    }
+                let mut result: $T = 0;
+                let mut i = 0;
+                while i < chars.len() {
+                    let val = encode_char(chars[i]);
+                    result = set_raw!($T, result, i, val);
+                    i += 1;
+                }
 
-    pub fn len_bytes(&self) -> usize {
-        (self.len()*5 + 7 /* round up */)/8
-    }
+                Some(Self(result))
+            }
 
-    pub fn as_slice(&self) -> &[u8] {
-        &self.0.0[0..self.len_bytes()]
-    }
+            #[inline] pub fn to_str(self) -> String {
+                let mut result = Vec::with_capacity(self.len());
+                for i in 0..self.len() {
+                    result.push(self.get_ascii(i));
+                }
+                unsafe{ String::from_utf8_unchecked(result) }
+            }
 
-    pub const fn as_bytes(&self) -> &[u8; WIDTH] {
-        &self.0.0
-    }
+            #[inline] pub const fn len(self) -> usize {
+                let mut i = 0;
+                while i < Self::CAPACITY {
+                    if self.get_raw(i) == 0 { return i; }
+                    i += 1;
+                }
+                Self::CAPACITY
+            }
 
-    pub fn len(&self) -> usize {
-        for i in (0..self.0.0.len()).rev() {
-            if self.0.0[i] == 0 { continue; }
+            #[inline] pub const fn is_empty(self) -> bool {
+                self.get_raw(0) == 0
+            }
 
-            // Found non-empty byte, scan forward, skipping the first char
-            // It can't be empty as the byte isn't empty. Also, we only need 
-            // to test 1 as a 5-bit encoding can't have more than 2 partial
-            // bytes
-            let idx_char = (i*8/5)+1;
-            return idx_char + if self.at_raw(idx_char) == 0 { 0 } else { 1 };
+            #[inline] pub const fn try_from_raw(value: $T) -> Option<Self> {
+                let result = Self(value);
+                let len = result.len();
+                let mut i = 0;
+                while i < Self::CAPACITY {
+                    let raw = result.get_raw(i);
+                    if raw > {if i < len { 27 } else { 0 }} { return None; }
+                    i += 1;
+                }
+                Some(result)
+            }
+
+            #[inline] pub const fn from_raw(value: $T) -> Self {
+                if let Some(value) = Self::try_from_raw(value) {
+                    value
+                } else {
+                    panic!("Invalid raw representation of CompactStr");
+                }
+            }
+
+            /// Creates a new CompactStr from its raw representation without
+            /// validating length or 
+            /// 
+            /// # Safety
+            /// There's no risk of UB in calling this. However, if the value
+            /// contains invalid codepoints or a null in the middle of the
+            /// raw version, then, behaviour of the struct is unspecified.
+            #[inline] pub const unsafe fn from_raw_unchecked(value: $T) -> Self {
+                Self(value)
+            }
+
+            #[inline] pub const fn to_raw(self) -> $T {
+                self.0
+            }
+
+            #[inline] pub fn set_ascii(&mut self, idx: usize, value: u8) {
+                assert!(idx < self.len(), "Attempt to index out of range");
+                self.set_raw(idx, encode_char(value));
+            }
+
+            #[inline] pub const fn get_ascii(&self, idx: usize) -> u8 {
+                assert!(idx < self.len(), "Attempt to index out of range");
+                unencode_char(self.get_raw(idx))
+            }
+
+            #[inline] fn set_raw(&mut self, idx: usize, val: u8) {
+                let s = self.0;
+                self.0 = set_raw!($T, s, idx, val)
+            }
+
+            #[inline] const fn get_raw(self, idx: usize) -> u8 {
+                (self.0 >> (idx*5) & 0b1_1111) as u8
+            }
         }
-        0
-    }
 
-    pub const fn is_empty(&self) -> bool {
-        self.0.0[0] == 0
-    }
+        impl CompactStr for $S {
+            type InnerType = $T;
 
-    pub const fn capacity() -> usize {
-        Self::CAPACITY
-    }
-
-    pub const CAPACITY: usize = if WIDTH*8/5 <= 64 { WIDTH*8/5 } else { panic!("CompactStr cannot be more than 64 bytes in length") };
-}
-
-impl<const WIDTH: usize> CompactStr<WIDTH> {
-    fn at_unchecked<T: From<u8>>(&self, index: usize) -> T {
-        T::from(match self.at_raw(index) {
-            1 => 95,
-            a => 63+a,
-        })
-    }
-
-    fn at_raw(&self, index: usize) -> u8 {
-        self.0.get_bits(index*5, 5)
-    }
-}
-
-
-// //////////////// //
-// // Characters // //
-// //////////////// //
-
-impl<const WIDTH: usize> CompactStr<WIDTH> {
-
-    pub fn iter<'a, T: From<u8>>(&'a self) -> CompactChars<'a, T, WIDTH> {
-        CompactChars::<'a, T, WIDTH>::new(self)
-    }
-
-    pub fn chars(&self) -> CompactChars<'_, char, WIDTH> {
-        self.iter()
-    }
-
-    pub fn ascii(&self) -> CompactChars<'_, u8, WIDTH> {
-        self.iter()
-    }
-
-}
-
-pub struct CompactChars<'a, T: From<u8>, const WIDTH: usize> {
-    idx: usize,
-    len: usize,
-    owner: &'a CompactStr<WIDTH>,
-    __: std::marker::PhantomData<T>,
-}
-
-impl<'a, T: From<u8>, const WIDTH: usize> CompactChars<'a, T, WIDTH> {
-    pub fn new(owner: &'a CompactStr<WIDTH>) -> Self {
-        Self{ idx: 0, len: owner.len(), owner, __: Default::default() }
-    }
-}
-
-impl<'a, T: From<u8>, const WIDTH: usize> Iterator for CompactChars<'a, T, WIDTH> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.idx < self.len {
-            self.idx += 1;
-            Some(self.owner.at_unchecked::<T>(self.idx - 1)) 
-        } else { 
-            None
+            const CAPACITY: usize = Self::CAPACITY;
+        
+            fn new(value: &str) -> Self { Self::new(value) }
+            fn try_new(value: &str) -> Option<Self> { Self::try_new(value) }
+            fn to_str(self) -> String { Self::to_str(self) }
+            fn len(self) -> usize { Self::len(self) }
+            fn is_empty(self) -> bool { Self::is_empty(self) }
+            fn try_from_raw(value: Self::InnerType) -> Option<Self> { Self::try_from_raw(value) }
+            fn from_raw(value: Self::InnerType) -> Self { Self::from_raw(value) }
+            unsafe fn from_raw_unchecked(value: Self::InnerType) -> Self { Self::from_raw_unchecked(value) }
+            fn to_raw(self) -> Self::InnerType { Self::to_raw(self) }
+            fn set_ascii(&mut self, idx: usize, value: u8) { Self::set_ascii(self, idx, value) }
+            fn get_ascii(&self, idx: usize) -> u8 { Self::get_ascii(self, idx) }
         }
+    };
+}
+
+#[macro_export]
+macro_rules! newtype_compactstr {
+    ($V:vis, $S:ident, $T:ty) => {
+        #[derive(shrinkwraprs::Shrinkwrap, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, std::hash::Hash, std::fmt::Debug)]
+        #[repr(transparent)]
+        $V struct $S($T);
+
+        impl $S {
+            $V const fn new(v: &str) -> Self {
+                Self(<$T>::new(v))
+            }
+
+            $V const fn try_new(v: &str) -> Option<Self> {
+                if let Some(v) = <$T>::try_new(v) {
+                    Some(Self(v))
+                } else {
+                    None
+                }
+            }
+
+            $V const fn try_from_raw(value: <$T as CompactStr>::InnerType) -> Option<Self> {
+                if let Some(v) = <$T>::try_from_raw(value) {
+                    Some(Self(v))
+                } else {
+                    None
+                }
+            }
+
+            $V const fn from_raw(value: <$T as CompactStr>::InnerType) -> Self {
+                Self(<$T>::from_raw(value))
+            }
+            
+            $V const unsafe fn from_raw_unchecked(v: u64) -> Self {
+                Self(<$T>::from_raw_unchecked(v))
+            }
+        }
+        
+        impl std::fmt::Display for $S {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.to_str())
+            }
+        }
+    };
+}
+
+impl_compact_str!(CompactStr8,   u8  );
+impl_compact_str!(CompactStr16,  u16 );
+impl_compact_str!(CompactStr32,  u32 );
+impl_compact_str!(CompactStr64,  u64 );
+impl_compact_str!(CompactStr128, u128);
+
+const fn encode_char(value: u8) -> u8 {
+    match value {
+        b'a'..=b'z' => (value as u8)-95, /* A-Z -> 2-27 */ 
+        b'A'..=b'Z' => (value as u8)-63, /* a-z -> 2-27*/ 
+        _        => 1           , /* Spc */
     }
 }
 
-// ////////// //
-// // Util // //
-// ////////// //
-
-const fn const_min(a: usize, b: usize) -> usize {
-    if a < b { a } else { b }
+const fn unencode_char(value: u8) -> u8 {
+    match value {
+        0 => b'\0',
+        1 => b'_',
+        _ => (value + 63)
+    }
 }

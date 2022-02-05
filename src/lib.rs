@@ -4,12 +4,16 @@
 
 pub mod collision;
 pub mod math;
-pub mod camera;
 pub mod physics;
 pub mod compact_str;
 pub mod resource;
 pub mod sync;
+pub mod util;
+
+#[cfg(feature = "bevy/render")]
+pub mod camera;
 
 pub mod prelude {
     pub use crate::math::prelude::*;
+    pub use crate::util::*;
 }

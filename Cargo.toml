@@ -3,9 +3,16 @@ name = "nvm-bevyutil"
 version = "0.0.1"
 edition = "2021"
 
+[features]
+default=["render"]
+render=["bevy/default"]
+
 [dependencies]
 arrayvec = "0.7.2"
+num-traits = "0.2.14"
+shrinkwraprs = "0.3.0"
 
 [dependencies.bevy]
 git="https://github.com/bevyengine/bevy.git"
 branch="main"
+default-features=false
