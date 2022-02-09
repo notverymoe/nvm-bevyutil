@@ -2,16 +2,17 @@
 ** NotVeryMoe BevyUtil | Copyright 2021 NotVeryMoe (projects@notvery.moe) **
 \*========================================================================*/
 
-use std::{sync::atomic::{Ordering, AtomicUsize}, cell::UnsafeCell, ops::{Deref, DerefMut}};
+use std::{sync::atomic::{Ordering, AtomicU8}, cell::UnsafeCell, ops::{Deref, DerefMut}};
 
-const BORROW_MUT_FLAG: usize = 1 << (usize::BITS - 1);
+const BORROW_MUT_FLAG: u8 = 1 << (u8::BITS - 1);
 
 /**
  * Implements a userspace rwlock-style mutex where writer
  * contention is an error. Implemented with an interface
- * similar to a RefCell.
+ * similar to a RefCell. Has a limit of 2^7 readers, and
+ * will panic when exceeded.
  **/ 
-pub struct SyncCell<T: ?Sized>(AtomicUsize, UnsafeCell<T>);
+pub struct SyncCell<T: ?Sized>(AtomicU8, UnsafeCell<T>);
 
 unsafe impl<T: ?Sized + Send> Send for SyncCell<T> {}
 unsafe impl<T: ?Sized + Sync> Sync for SyncCell<T> {}

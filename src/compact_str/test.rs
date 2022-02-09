@@ -13,10 +13,11 @@ fn empty() {
 
 #[test]
 fn overflow() {
-    assert!(CompactStr8::try_new(""   ).is_some());
-    assert!(CompactStr8::try_new("a"  ).is_some());
-    assert!(CompactStr8::try_new("aa" ).is_none());
-    assert!(CompactStr8::try_new("aaa").is_none());
+    assert!(CompactStr8::try_new(""   ).is_ok());
+    assert!(CompactStr8::try_new("a"  ).is_ok());
+    assert!(CompactStr8::try_new("aa" ).is_err());
+    assert!(CompactStr8::try_new("aaa").is_err());
+    assert!(CompactStr8::try_new("a1a").is_err());
 }
 
 #[test]
@@ -59,11 +60,7 @@ fn long() {
         CompactStr64::new("ABCDEFGH"),
         CompactStr64::new("IJKLMNOP"),
         CompactStr64::new("QRSTUVWX"),
-        CompactStr64::new("YZ_!@#$%"),
-        CompactStr64::new("^&*()_+["),
-        CompactStr64::new("]:\"';?><"),
-        CompactStr64::new("/.,12345"),
-        CompactStr64::new("67890"),
+        CompactStr64::new("YZ_ "),
     ];
 
     // 5-bit groupings across byte boundaries
@@ -71,11 +68,7 @@ fn long() {
         0b01001_01000_00111_00110_00101_00100_00011_00010u64,
         0b10001_10000_01111_01110_01101_01100_01011_01010u64,
         0b11001_11000_10111_10110_10101_10100_10011_10010u64,
-        0b00001_00001_00001_00001_00001_00001_11011_11010u64,
-        0b00001_00001_00001_00001_00001_00001_00001_00001u64,
-        0b00001_00001_00001_00001_00001_00001_00001_00001u64,
-        0b00001_00001_00001_00001_00001_00001_00001_00001u64,
-        0b00001_00001_00001_00001_00001u64, 
+        0b00000_00000_00000_00000_00001_00001_11011_11010u64,
     ].iter().enumerate() {
         assert_eq!(v[i].to_raw(), raw, "{}", i); 
     }

@@ -10,7 +10,7 @@ pub trait CompactStr: Default + Copy + Eq + Ord + std::hash::Hash + std::fmt::De
     const CAPACITY: usize;
 
     fn new(value: &str) -> Self;
-    fn try_new(value: &str) -> Option<Self>;
+    fn try_new(value: &str) -> Result<Self, &'static str>;
     fn to_str(self) -> String;
     fn len(self) -> usize;
     fn is_empty(self) -> bool;
@@ -60,26 +60,30 @@ macro_rules! impl_compact_str {
             pub const CAPACITY: usize = std::mem::size_of::<$T>()*8/5;
 
             #[inline] pub const fn new(value: &str) -> Self {
-                if let Some(value) = Self::try_new(value) {
-                    value
-                } else {
-                    panic!("String too long to store in CompactStr");
+                match Self::try_new(value) {
+                    Ok(value) => value,
+                    Err(e)    => panic!("{}", e) ,
                 }
             }
 
-            #[inline] pub const fn try_new(value: &str) -> Option<Self> {
+            #[inline] pub const fn try_new(value: &str) -> Result<Self, &'static str> {
                 let chars = value.as_bytes();
-                if chars.len() > Self::CAPACITY { return None; }
+                if chars.len() > Self::CAPACITY { 
+                    return Err("String contains too many characters."); 
+                }
 
                 let mut result: $T = 0;
                 let mut i = 0;
                 while i < chars.len() {
-                    let val = encode_char(chars[i]);
-                    result = set_raw!($T, result, i, val);
-                    i += 1;
+                    if let Some(val) = encode_char(chars[i]) {
+                        result = set_raw!($T, result, i, val);
+                        i += 1;
+                    } else {
+                        return Err("String contains invalid characters.");
+                    }
                 }
 
-                Some(Self(result))
+                Ok(Self(result))
             }
 
             #[inline] pub fn to_str(self) -> String {
@@ -140,7 +144,7 @@ macro_rules! impl_compact_str {
 
             #[inline] pub fn set_ascii(&mut self, idx: usize, value: u8) {
                 assert!(idx < self.len(), "Attempt to index out of range");
-                self.set_raw(idx, encode_char(value));
+                self.set_raw(idx, encode_char(value).expect("Invalid character"));
             }
 
             #[inline] pub const fn get_ascii(&self, idx: usize) -> u8 {
@@ -164,7 +168,7 @@ macro_rules! impl_compact_str {
             const CAPACITY: usize = Self::CAPACITY;
         
             fn new(value: &str) -> Self { Self::new(value) }
-            fn try_new(value: &str) -> Option<Self> { Self::try_new(value) }
+            fn try_new(value: &str) -> Result<Self, &'static str> { Self::try_new(value) }
             fn to_str(self) -> String { Self::to_str(self) }
             fn len(self) -> usize { Self::len(self) }
             fn is_empty(self) -> bool { Self::is_empty(self) }
@@ -190,15 +194,14 @@ macro_rules! newtype_compactstr {
                 Self(<$T>::new(v))
             }
 
-            $V const fn try_new(v: &str) -> Option<Self> {
-                if let Some(v) = <$T>::try_new(v) {
-                    Some(Self(v))
-                } else {
-                    None
+            $V const fn try_new(v: &str) -> Result<Self, &'static str> {
+                match <$T>::try_new(v) {
+                    Ok(v)  => Ok(Self(v)),
+                    Err(v) => Err(v),
                 }
             }
 
-            $V const fn try_from_raw(value: <$T as CompactStr>::InnerType) -> Option<Self> {
+            $V const fn try_from_raw(value: <$T as nvm_bevyutil::compact_str::CompactStr>::InnerType) -> Option<Self> {
                 if let Some(v) = <$T>::try_from_raw(value) {
                     Some(Self(v))
                 } else {
@@ -206,11 +209,11 @@ macro_rules! newtype_compactstr {
                 }
             }
 
-            $V const fn from_raw(value: <$T as CompactStr>::InnerType) -> Self {
+            $V const fn from_raw(value: <$T as nvm_bevyutil::compact_str::CompactStr>::InnerType) -> Self {
                 Self(<$T>::from_raw(value))
             }
             
-            $V const unsafe fn from_raw_unchecked(v: u64) -> Self {
+            $V const unsafe fn from_raw_unchecked(v: <$T as nvm_bevyutil::compact_str::CompactStr>::InnerType) -> Self {
                 Self(<$T>::from_raw_unchecked(v))
             }
         }
@@ -229,11 +232,12 @@ impl_compact_str!(CompactStr32,  u32 );
 impl_compact_str!(CompactStr64,  u64 );
 impl_compact_str!(CompactStr128, u128);
 
-const fn encode_char(value: u8) -> u8 {
+const fn encode_char(value: u8) -> Option<u8> {
     match value {
-        b'a'..=b'z' => (value as u8)-95, /* A-Z -> 2-27 */ 
-        b'A'..=b'Z' => (value as u8)-63, /* a-z -> 2-27*/ 
-        _        => 1           , /* Spc */
+        b'a'..=b'z' => Some((value as u8)-95), /* A-Z -> 2-27 */ 
+        b'A'..=b'Z' => Some((value as u8)-63), /* a-z -> 2-27*/ 
+        b' '|b'_'   => Some(1               ), /* Spc */
+        _ => None
     }
 }
 
