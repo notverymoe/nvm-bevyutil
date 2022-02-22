@@ -9,6 +9,7 @@ pub mod compact_str;
 pub mod resource;
 pub mod sync;
 pub mod util;
+pub mod container;
 
 #[cfg(feature = "bevy/render")]
 pub mod camera;
