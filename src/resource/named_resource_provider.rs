@@ -2,9 +2,7 @@
 ** NotVeryMoe BevyUtil | Copyright 2021 NotVeryMoe (projects@notvery.moe) **
 \*========================================================================*/
 
-use std::collections::hash_map::Entry;
-
-use bevy::utils::HashMap;
+use bevy::utils::{HashMap, hashbrown::hash_map::Entry};
 
 use crate::compact_str::CompactStr;
 

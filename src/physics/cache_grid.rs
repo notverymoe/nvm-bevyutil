@@ -2,11 +2,11 @@
 ** NotVeryMoe BevyUtil | Copyright 2021 NotVeryMoe (projects@notvery.moe) **
 \*========================================================================*/
 
-use std::collections::{hash_map::Entry, VecDeque};
+use std::collections::VecDeque;
 
 use bevy::{
     ecs::entity::Entity,
-    utils::{HashMap, HashSet}, 
+    utils::{HashMap, HashSet, hashbrown::hash_map::Entry}, 
 };
 
 use crate::collision::{Shape, Projection};
